@@ -3,7 +3,7 @@ import { render, screen, userEvent } from '@mongodb-js/testing-library-compass';
 import { expect } from 'chai';
 import sinon from 'sinon';
 
-import { ConnectionFormModalActions } from './connection-form-actions';
+import { ConnectionFormModalActions } from './connection-form-modal-actions';
 
 describe('<ConnectionFormModalActions />', function () {
   it('should show warnings', function () {
@@ -30,7 +30,7 @@ describe('<ConnectionFormModalActions />', function () {
     expect(screen.getByText('Error!')).to.be.visible;
   });
 
-  describe('Connect Button', function () {
+  describe('Save&Connect Button', function () {
     it('should call onSaveAndConnect function', function () {
       const onSaveAndConnectSpy = sinon.spy();
       render(
@@ -41,10 +41,23 @@ describe('<ConnectionFormModalActions />', function () {
           onSaveAndConnect={onSaveAndConnectSpy}
         ></ConnectionFormModalActions>
       );
-      const connectButton = screen.getByRole('button', { name: 'Connect' });
+      const connectButton = screen.getByRole('button', {
+        name: 'Save & Connect',
+      });
       userEvent.click(connectButton);
 
       expect(onSaveAndConnectSpy).to.have.been.calledOnce;
+    });
+
+    it('should hide "connect" button if there is no callback', function () {
+      render(
+        <ConnectionFormModalActions
+          errors={[]}
+          warnings={[]}
+        ></ConnectionFormModalActions>
+      );
+      expect(screen.queryByRole('button', { name: 'Save & Connect' })).to.not
+        .exist;
     });
   });
 

@@ -19,11 +19,13 @@ import {
   cx,
   palette,
   useDarkMode,
+  Button,
+  Icon,
 } from '@mongodb-js/compass-components';
 import { cloneDeep } from 'lodash';
 import ConnectionStringInput from './connection-string-input';
 import AdvancedConnectionOptions from './advanced-connection-options';
-import { ConnectionFormModalActions } from './connection-form-actions';
+import { ConnectionFormModalActions } from './connection-form-modal-actions';
 import {
   useConnectForm,
   type ConnectionPersonalizationOptions,
@@ -39,7 +41,7 @@ import { useConnectionColor } from '../hooks/use-connection-color';
 import FormHelp from './form-help/form-help';
 
 const descriptionStyles = css({
-  marginTop: spacing[2],
+  marginTop: spacing[200],
 });
 
 const formStyles = css({
@@ -127,8 +129,18 @@ const headingWithHiddenButtonStyles = css({
   },
 });
 
+const bannerStyles = css({
+  marginTop: spacing[400],
+  paddingRight: 0,
+});
+const disabledConnectedConnectionContentStyles = css({
+  display: 'flex',
+  gap: spacing[400],
+  alignItems: 'center',
+});
+
 const connectionStringErrorStyles = css({
-  marginBottom: spacing[3],
+  marginBottom: spacing[400],
 });
 
 const colorPreviewStyles = css({
@@ -185,8 +197,8 @@ const personalizationSectionLayoutStyles = css({
     'name-input color-input'
     'favorite-marker favorite-marker'
   `,
-  gap: spacing[4],
-  marginBottom: spacing[4],
+  gap: spacing[600],
+  marginBottom: spacing[600],
 });
 
 const personalizationNameInputStyles = css({
@@ -303,12 +315,28 @@ type ConnectionFormPropsWithoutSettings = {
   darkMode?: boolean;
   initialConnectionInfo: ConnectionInfo;
   connectionErrorMessage?: string | null;
-  onCancel?: () => void;
-  onConnectClicked?: (connectionInfo: ConnectionInfo) => void;
-  onSaveAndConnectClicked?: (connectionInfo: ConnectionInfo) => void;
-  onSaveClicked?: (connectionInfo: ConnectionInfo) => Promise<void>;
+  disableEditingConnectedConnection?: boolean;
+  onDisconnectClicked?: () => void;
   onAdvancedOptionsToggle?: (newState: boolean) => void;
   openSettingsModal?: (tab?: string) => void;
+
+  // form action buttons:
+
+  onCancel?: () => void;
+
+  // If onSaveClicked is specified, a Save button will show up. It will be the
+  // primary button if there is no onSaveAndConnectClick.
+  onSaveClicked?: (connectionInfo: ConnectionInfo) => Promise<void>;
+
+  // If onConnectClicked is specified, a Connect button will show up.
+  onConnectClicked?: (connectionInfo: ConnectionInfo) => void;
+
+  // If onSaveAndConnectClicked is specified, a button will show up with
+  // its label set to the value of the setting saveAndConnectLabel. It will be
+  // the primary button if specified. If onConnectClicked is specified, the test
+  // id will be save-and-connect-button, otherwise it will be connect-button.
+  // For historical/backwards compatible reasons.
+  onSaveAndConnectClicked?: (connectionInfo: ConnectionInfo) => void;
 };
 
 export type ConnectionFormProps = ConnectionFormPropsWithoutSettings &
@@ -317,8 +345,11 @@ export type ConnectionFormProps = ConnectionFormPropsWithoutSettings &
 function ConnectionForm({
   initialConnectionInfo,
   connectionErrorMessage,
+  disableEditingConnectedConnection = false,
   onSaveAndConnectClicked,
   onSaveClicked,
+  onConnectClicked,
+  onDisconnectClicked,
   onCancel,
   onAdvancedOptionsToggle,
   openSettingsModal,
@@ -388,29 +419,6 @@ function ConnectionForm({
     }),
     [initialConnectionInfo, connectionOptions, personalizationOptions]
   );
-  const onSubmitForm = useCallback(() => {
-    const updatedConnectionOptions = cloneDeep(connectionOptions);
-    // TODO: this method throws on malformed connection strings instead of
-    // returning errors
-    const formErrors = validateConnectionOptionsErrors(
-      updatedConnectionOptions
-    );
-    if (formErrors.length) {
-      setErrors(formErrors);
-      return;
-    }
-    onSaveAndConnectClicked?.({
-      ...initialConnectionInfo,
-      ...getConnectionInfoToSave(),
-      connectionOptions: updatedConnectionOptions,
-    });
-  }, [
-    initialConnectionInfo,
-    onSaveAndConnectClicked,
-    setErrors,
-    connectionOptions,
-    getConnectionInfoToSave,
-  ]);
 
   const callOnSaveConnectionClickedAndStoreErrors = useCallback(
     async (connectionInfo: ConnectionInfo): Promise<void> => {
@@ -429,6 +437,52 @@ function ConnectionForm({
     },
     [onSaveClicked, setErrors]
   );
+  const onSubmitForm = useCallback(
+    (intendedAction?: 'connect' | 'save-and-connect') => {
+      const updatedConnectionOptions = cloneDeep(connectionOptions);
+      // TODO: this method throws on malformed connection strings instead of
+      // returning errors
+      const formErrors = validateConnectionOptionsErrors(
+        updatedConnectionOptions
+      );
+      if (formErrors.length) {
+        setErrors(formErrors);
+        return;
+      }
+      if (intendedAction === 'connect') {
+        // The user explicitly clicked connect, so we use that.
+        onConnectClicked?.({
+          ...initialConnectionInfo,
+          ...getConnectionInfoToSave(),
+          connectionOptions: updatedConnectionOptions,
+        });
+      } else {
+        if (onSaveAndConnectClicked) {
+          // If there is a save&connect button, we use that action by default.
+          onSaveAndConnectClicked?.({
+            ...initialConnectionInfo,
+            ...getConnectionInfoToSave(),
+            connectionOptions: updatedConnectionOptions,
+          });
+        } else {
+          // If there isn't a save&connect button then the next default action
+          // should be to save.
+          void callOnSaveConnectionClickedAndStoreErrors?.(
+            getConnectionInfoToSave()
+          );
+        }
+      }
+    },
+    [
+      connectionOptions,
+      setErrors,
+      onConnectClicked,
+      initialConnectionInfo,
+      getConnectionInfoToSave,
+      callOnSaveConnectionClickedAndStoreErrors,
+      onSaveAndConnectClicked,
+    ]
+  );
 
   const showPersonalisationForm = useConnectionFormSetting(
     'showPersonalisationForm'
@@ -436,9 +490,18 @@ function ConnectionForm({
 
   const showHelpCardsInForm = useConnectionFormSetting('showHelpCardsInForm');
 
+  /*
+  To test onSubmit on a form (ie. what happens when you press {enter} and not
+  what happens when you click a submit button) you have to use submit() which only
+  works with role="form", but eslint doesn't like that because role="form"
+  should be redundant.
+  https://stackoverflow.com/questions/59362804/pressing-enter-to-submit-form-in-react-testing-library-does-not-work
+  */
+  /* eslint-disable jsx-a11y/no-redundant-roles */
   return (
     <ConfirmationModalArea>
       <form
+        role="form"
         className={formStyles}
         onSubmit={(e) => {
           // Prevent default html page refresh.
@@ -451,7 +514,8 @@ function ConnectionForm({
         <div className={formHeaderStyles}>
           <div className={formHeaderContentStyles}>
             <H3 className={headingWithHiddenButtonStyles}>
-              {initialConnectionInfo.favorite?.name ?? 'New Connection'}
+              {(initialConnectionInfo.favorite?.name ?? 'New Connection') ||
+                'Edit Connection'}
             </H3>
             <Description className={descriptionStyles}>
               Manage your connection settings
@@ -461,9 +525,47 @@ function ConnectionForm({
 
         <div className={formContentContainerStyles}>
           <div className={formContentStyles}>
+            {disableEditingConnectedConnection && onDisconnectClicked && (
+              <Banner
+                data-testid="disabled-connected-connection-banner"
+                className={bannerStyles}
+              >
+                <div className={disabledConnectedConnectionContentStyles}>
+                  <div>
+                    While connected, you may only personalize your
+                    connection&apos;s name, color or favorite status. To fully
+                    configure it, you must first disconnect. Beware that
+                    disconnecting might cause work in progress to be lost.
+                  </div>
+                  <div>
+                    <Button
+                      size="small"
+                      leftGlyph={<Icon glyph="Disconnect" />}
+                      onClick={onDisconnectClicked}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                </div>
+              </Banner>
+            )}
+            {protectConnectionStrings && !disableEditingConnectedConnection && (
+              <Banner
+                data-testid="protect-connection-strings-banner"
+                className={bannerStyles}
+              >
+                Advanced Connection Options are hidden while the &quot;Protect
+                Connection String Secrets&quot; setting is enabled. Disable the
+                setting to configure Advanced Connection Options or edit your
+                connection string.
+              </Banner>
+            )}
             <ConnectionStringInput
               connectionString={connectionOptions.connectionString}
               enableEditingConnectionString={enableEditingConnectionString}
+              disableEditingConnectedConnection={
+                !!disableEditingConnectedConnection
+              }
               setEnableEditingConnectionString={
                 setEnableEditingConnectionString
               }
@@ -485,12 +587,19 @@ function ConnectionForm({
                 updateConnectionFormField={updateConnectionFormField}
               />
             )}
-            {!protectConnectionStrings && (
+            {!(
+              protectConnectionStrings || disableEditingConnectedConnection
+            ) && (
               <AdvancedConnectionOptions
                 open={advancedOpen}
                 setOpen={onAdvancedChange}
                 errors={connectionStringInvalidError ? [] : errors}
-                disabled={!!connectionStringInvalidError}
+                disabled={
+                  !!(
+                    connectionStringInvalidError ||
+                    disableEditingConnectedConnection
+                  )
+                }
                 updateConnectionFormField={updateConnectionFormField}
                 connectionOptions={connectionOptions}
                 openSettingsModal={openSettingsModal}
@@ -518,18 +627,27 @@ function ConnectionForm({
             warnings={connectionStringInvalidError ? [] : warnings}
             onCancel={onCancel}
             onSave={
-              onSaveClicked &&
-              (() =>
-                void callOnSaveConnectionClickedAndStoreErrors?.(
-                  getConnectionInfoToSave()
-                ))
+              onSaveClicked
+                ? () =>
+                    void callOnSaveConnectionClickedAndStoreErrors?.(
+                      getConnectionInfoToSave()
+                    )
+                : undefined
             }
-            onSaveAndConnect={onSubmitForm}
+            onConnect={
+              onConnectClicked ? () => onSubmitForm('connect') : undefined
+            }
+            onSaveAndConnect={
+              onSaveAndConnectClicked
+                ? () => onSubmitForm('save-and-connect')
+                : undefined
+            }
           />
         </div>
       </form>
     </ConfirmationModalArea>
   );
+  /* eslint-enable jsx-a11y/no-redundant-roles */
 }
 
 const ConnectionFormWithSettings: React.FunctionComponent<
